@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pack Hunt — predator/prey personality sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@600;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#10130f;--panel:#181d15;--panel2:#141810;--line:#2b3326;--ink:#e6e8df;--mut:#7e8875;--w:#d4a24c;--d:#8fc98a;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Bitter",Georgia,serif}
+.wrap{max-width:1000px;margin:0 auto;padding:20px 16px 60px}
+header{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:20px}
+h1{font-size:27px;font-weight:800;margin:0;letter-spacing:.3px}
+h1 .w{color:var(--w)} h1 .d{color:var(--d)}
+.sub{color:var(--mut);font-size:13px;font-family:"IBM Plex Mono",monospace;margin-top:4px}
+.duel{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.side{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px}
+.side.w{border-top:3px solid var(--w)} .side.d{border-top:3px solid var(--d)}
+.side h2{margin:0 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:1.6px;font-family:"IBM Plex Mono",monospace}
+.side.w h2{color:var(--w)} .side.d h2{color:var(--d)}
+label{display:block;font-size:11px;color:var(--mut);margin:9px 0 3px;text-transform:uppercase;letter-spacing:1px;font-family:"IBM Plex Mono",monospace}
+select,input[type=number]{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:6px;font:14px "IBM Plex Mono",monospace}
+.trait{display:grid;grid-template-columns:88px 1fr 36px;gap:8px;align-items:center;margin:5px 0;font:12px "IBM Plex Mono",monospace}
+.trait input[type=range]{width:100%;height:4px}
+.side.w .trait input[type=range]{accent-color:var(--w)}
+.side.d .trait input[type=range]{accent-color:var(--d)}
+.trait .v{text-align:right;color:var(--mut)}
+.counts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0 0}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0;align-items:center}
+button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:10px 16px;font:600 14px "IBM Plex Mono",monospace;cursor:pointer}
+button:hover{border-color:var(--mut)} button:focus-visible{outline:2px solid var(--d)}
+button.primary{background:var(--w);color:#1a1206;border-color:var(--w)}
+.sweepbox{display:flex;gap:8px;align-items:center;font:13px "IBM Plex Mono",monospace;color:var(--mut)}
+.sweepbox select{width:auto}
+.out{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:15px;min-height:130px}
+.out h3{margin:0 0 10px;font:600 12px "IBM Plex Mono",monospace;text-transform:uppercase;letter-spacing:1.5px;color:var(--mut)}
+.log{font:13px/1.65 "IBM Plex Mono",monospace;white-space:pre-wrap;max-height:360px;overflow:auto}
+.log .cw{color:var(--w);font-weight:600} .log .cd{color:var(--d);font-weight:600}
+.log .cn{color:var(--ink);font-weight:600} .log .mut{color:var(--mut)}
+.barrow{display:grid;grid-template-columns:130px 1fr 54px;gap:9px;align-items:center;margin:6px 0;font:12px "IBM Plex Mono",monospace}
+.barlbl{color:var(--mut)} .barval{text-align:right;color:var(--mut)}
+.bartrack{background:var(--line);border-radius:4px;height:15px;overflow:hidden}
+.barfill{height:100%} .fw{background:var(--w)} .fd{background:var(--d)}
+table.sweep{width:100%;border-collapse:collapse;font:12px "IBM Plex Mono",monospace}
+table.sweep td,table.sweep th{padding:5px 7px;border-bottom:1px solid var(--line);text-align:left}
+table.sweep td:nth-child(3){width:55%}
+@media (max-width:720px){.duel{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="w">PACK</span> <span class="d">HUNT</span></h1>
+    <div class="sub">asymmetric roles · wolves score by catching, deer by outlasting the clock</div>
+  </header>
+  <div class="duel">
+    <section class="side w" id="sideW"><h2>Wolves — chase / converge / cut off / hold</h2></section>
+    <section class="side d" id="sideD"><h2>Deer — flee / scatter / freeze / graze</h2></section>
+  </div>
+  <div class="counts">
+    <div><label>Wolves</label><input type="number" id="nWolves" value="3" min="1" max="8"></div>
+    <div><label>Deer</label><input type="number" id="nDeer" value="5" min="1" max="12"></div>
+  </div>
+  <div class="actions">
+    <button class="primary" id="btnHunt">Run one hunt</button>
+    <button id="btnSim">Simulate 300</button>
+    <span class="sweepbox">sweep wolf
+      <select id="sweepTrait">
+        <option>aggression</option><option>caution</option><option selected>cooperation</option>
+        <option>patience</option><option>risk</option><option>focus</option><option>randomness</option>
+      </select>
+      <button id="btnSweep">Run sweep</button>
+    </span>
+  </div>
+  <div class="out">
+    <h3 id="outTitle">Output</h3>
+    <div id="out" class="log">Set both sides, then run a hunt. Cooperation is the interesting dial — try it at 0.0 versus 1.0.</div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
