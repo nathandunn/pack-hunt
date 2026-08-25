@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Asymmetric predator/prey personality simulation on @precog/sim-core",
   "scripts": { "build": "esbuild src/main.ts --bundle --format=iife --outfile=public/app.js --minify" },
-  "dependencies": { "@precog/sim-core": "file:../sim-core" },
+  "dependencies": { "@precog/sim-core": "file:../sim-core", "@precog/agent-forge": "file:../agent-forge" },
   "devDependencies": { "esbuild": "^0.23.0", "typescript": "^5.5.0" },
   "license": "MIT"
 }

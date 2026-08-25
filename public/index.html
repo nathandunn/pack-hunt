@@ -22,17 +22,20 @@ h1 .w{color:var(--w)} h1 .d{color:var(--d)}
 .side.w h2{color:var(--w)} .side.d h2{color:var(--d)}
 label{display:block;font-size:11px;color:var(--mut);margin:9px 0 3px;text-transform:uppercase;letter-spacing:1px;font-family:"IBM Plex Mono",monospace}
 select,input[type=number]{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:6px;font:14px "IBM Plex Mono",monospace}
-.trait{display:grid;grid-template-columns:88px 1fr 36px;gap:8px;align-items:center;margin:5px 0;font:12px "IBM Plex Mono",monospace}
+.trait{display:grid;grid-template-columns:88px 1fr 36px 14px;gap:8px;align-items:center;margin:5px 0;font:12px "IBM Plex Mono",monospace}
 .trait input[type=range]{width:100%;height:4px}
 .side.w .trait input[type=range]{accent-color:var(--w)}
 .side.d .trait input[type=range]{accent-color:var(--d)}
 .trait .v{text-align:right;color:var(--mut)}
+.lockmark{width:14px;text-align:center}
 .counts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0 0}
 .actions{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0;align-items:center}
 button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:10px 16px;font:600 14px "IBM Plex Mono",monospace;cursor:pointer}
 button:hover{border-color:var(--mut)} button:focus-visible{outline:2px solid var(--d)}
 button.primary{background:var(--w);color:#1a1206;border-color:var(--w)}
-.sweepbox{display:flex;gap:8px;align-items:center;font:13px "IBM Plex Mono",monospace;color:var(--mut)}
+button.ghost{background:transparent}
+button.mini{padding:4px 10px;font-size:11px}
+.sweepbox{display:flex;gap:8px;align-items:center;font:13px "IBM Plex Mono",monospace;color:var(--mut);flex-wrap:wrap}
 .sweepbox select{width:auto}
 .out{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:15px;min-height:130px}
 .out h3{margin:0 0 10px;font:600 12px "IBM Plex Mono",monospace;text-transform:uppercase;letter-spacing:1.5px;color:var(--mut)}
@@ -46,6 +49,9 @@ button.primary{background:var(--w);color:#1a1206;border-color:var(--w)}
 table.sweep{width:100%;border-collapse:collapse;font:12px "IBM Plex Mono",monospace}
 table.sweep td,table.sweep th{padding:5px 7px;border-bottom:1px solid var(--line);text-align:left}
 table.sweep td:nth-child(3){width:55%}
+.summary{font:13px "IBM Plex Mono",monospace;color:var(--mut);margin-bottom:10px;padding:8px 10px;background:var(--panel);border-radius:6px}
+.summary b{color:var(--ink)}
+.lockrow{display:flex;gap:8px;margin-top:10px}
 @media (max-width:720px){.duel{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -67,12 +73,17 @@ table.sweep td:nth-child(3){width:55%}
   <div class="actions">
     <button class="primary" id="btnHunt">Run one hunt</button>
     <button id="btnSim">Simulate 300</button>
-    <span class="sweepbox">sweep wolf
+  </div>
+  <div class="actions">
+    <span class="sweepbox">
+      sweep side <select id="sweepSide"><option value="wolves">wolves</option><option value="deer">deer</option></select>
+      trait
       <select id="sweepTrait">
         <option>aggression</option><option>caution</option><option selected>cooperation</option>
         <option>patience</option><option>risk</option><option>focus</option><option>randomness</option>
       </select>
       <button id="btnSweep">Run sweep</button>
+      <button id="btnSweepAll" class="ghost">Sweep all traits</button>
     </span>
   </div>
   <div class="out">
