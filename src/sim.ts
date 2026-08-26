@@ -1,4 +1,5 @@
 import { Rng, utilityDecide, type Candidate, type Personality } from "@precog/sim-core";
+import { runBatch } from "@precog/agent-forge/dist/batch.js";
 
 export const W = 16, H = 10;
 export interface Actor { id: string; x: number; y: number; alive: boolean; p: Personality; }
@@ -116,12 +117,16 @@ export function runHunt(
 }
 
 export function runSeries(wolfP: Personality, deerP: Personality, nWolves: number, nDeer: number, n: number, seed = 900): { caughtAvg: number; wipeouts: number; escapes: number; n: number } {
-  let caught = 0, wipeouts = 0, escapes = 0;
-  for (let i = 0; i < n; i++) {
-    const r = runHunt(wolfP, deerP, nWolves, nDeer, seed + i);
-    caught += r.caught;
-    if (r.caught === r.total) wipeouts++;
-    if (r.caught === 0) escapes++;
-  }
-  return { caughtAvg: caught / n, wipeouts, escapes, n };
+  const t = runBatch({
+    trials: n,
+    seedBase: seed,
+    init: () => ({ caught: 0, wipeouts: 0, escapes: 0 }),
+    runTrial: (s, trialSeed) => {
+      const r = runHunt(wolfP, deerP, nWolves, nDeer, trialSeed);
+      s.caught += r.caught;
+      if (r.caught === r.total) s.wipeouts++;
+      if (r.caught === 0) s.escapes++;
+    },
+  });
+  return { caughtAvg: t.caught / n, wipeouts: t.wipeouts, escapes: t.escapes, n };
 }
