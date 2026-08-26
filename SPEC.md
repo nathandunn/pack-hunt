@@ -1,39 +1,45 @@
-# Pack Hunt — SPEC v0.2
+# Pack Hunt — SPEC v0.3
 
-Status: agreed 2026-08-25.
+Status: agreed 2026-08-26, from a feedback session. Supersedes v0.2.
+Cross-cutting requirements (league, legibility, lab, style):
+see `hub-orchestrator/specs/2026-08-26-suite-v0.3.md`.
 
 ## Verdict
-Iterate. The simulation is the most visually interesting of the set and is
-currently entirely invisible.
+**Iterate.** The hunt is the right idea; three rule changes tighten it and
+make escape the norm.
 
-## The main gap
-Pack Hunt already runs a real spatial simulation — wolves converging, cutting
-off, holding position; deer fleeing, scattering, freezing — on a 16x10 grid.
-None of it is rendered. The user sees a truncated text trace and a number.
+## Rule changes
 
-## Add — animated board
-- Render the 16x10 grid with wolf and deer sprites
-- Animate movement turn by turn
-- Distinct visual for each action: chase (direct line), converge (pack focus
-  highlight), cutoff (flanking arc), hold (idle marker)
-- Catch flash when a wolf reaches a deer
-- Turn counter and live remaining-deer count
-- Playback controls: play / pause / step / speed
+1. **No square sharing.** No two entities — wolf or deer — ever occupy the
+   same cell. All movement into an occupied square is illegal, with one
+   exception:
+2. **Catch = attack-adjacent.** A wolf catches by moving INTO an adjacent
+   deer's square as an attack; the deer is removed and the wolf takes the
+   square. This is the only square-entry onto an occupied cell, and it is
+   the moment the animation celebrates.
+3. **Per-wolf stamina, ~30 moves.** Each wolf individually has a budget of
+   about 30 moves. **Holding position costs nothing** — patient wolves can
+   ambush while eager ones burn out. A wolf out of moves is exhausted and
+   drops out of the hunt (visibly — slumped sprite, greyed).
 
-This is where "see what the algorithm is doing" pays off most in the whole
-suite — cooperation visibly changes pack shape.
+## Balance target — deer usually escape
 
-## Add — sweep upgrades
-Same four as Battle Bots:
-1. Sweep either side (wolves or deer) — currently wolves only
-2. Per-sweep summary with best value, delta, and shape of effect
-3. Sweep all traits, ranked by impact
-4. Lock to best / worst and continue sweeping
+In the wild the hunt usually fails. Tune (via batch sims, then by watching)
+so a typical hunt catches **0–1 deer**; full wipeouts should be rare events.
+A catch is the fireworks moment of the fish tank precisely because most
+hunts end with the pack exhausted and the herd away.
 
-## Keep
-Trait sliders, archetype presets, batch simulation stats
-(average caught, wipeout rate, clean escape rate).
+## Keep from v0.2
+- The animated board, sprites, action glyphs, and playback controls.
+- The asymmetric sides and both sides' action sets (adjusted for the
+  no-overlap rule).
+- Sweep/evolve/simulate (now in the Lab section).
 
-## Audience
-Public demo. Strongest candidate for a portfolio centrepiece because the
-personality effect is legible on screen rather than only in numbers.
+## Personality notes
+Stamina makes **patience** directly visible (ambush vs burnout) and sharpens
+**cooperation** (coordinated cutoffs matter more when moves are finite).
+Exaggerate per the suite legibility bar.
+
+## Out of scope
+- Terrain/obstacles, seasons, pack hierarchies.
+- Human control of a wolf or deer.
