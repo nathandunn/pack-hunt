@@ -58,7 +58,23 @@ export function deerCandidates(threatDist: number): Candidate<DeerAction>[] {
 
 export interface HuntResult { caught: number; total: number; turns: number; }
 
-export function runHunt(wolfP: Personality, deerP: Personality, nWolves: number, nDeer: number, seed: number, maxTurns = 60, trace?: string[]): HuntResult {
+/** One frame of replay data: every actor's position and chosen action that turn. */
+export interface WolfFrame { id: string; x: number; y: number; action: WolfAction; }
+export interface DeerFrame { id: string; x: number; y: number; alive: boolean; action: DeerAction | null; }
+export interface TurnSnapshot {
+  turn: number;
+  wolves: WolfFrame[];
+  deer: DeerFrame[];
+  /** Deer id the pack is converging on this turn, if any wolf chose converge. */
+  focusId: string | null;
+  /** Deer ids caught this turn. */
+  caught: string[];
+}
+
+export function runHunt(
+  wolfP: Personality, deerP: Personality, nWolves: number, nDeer: number, seed: number,
+  maxTurns = 60, replay?: TurnSnapshot[],
+): HuntResult {
   const rng = new Rng(seed);
   const wolves: Actor[] = Array.from({ length: nWolves }, (_, i) => ({ id: `w${i}`, x: rng.int(3), y: rng.int(H), alive: true, p: wolfP }));
   const deer: Actor[] = Array.from({ length: nDeer }, (_, i) => ({ id: `d${i}`, x: W - 1 - rng.int(4), y: rng.int(H), alive: true, p: deerP }));
@@ -66,18 +82,20 @@ export function runHunt(wolfP: Personality, deerP: Personality, nWolves: number,
 
   for (w.turn = 1; w.turn <= maxTurns && deer.some(d => d.alive); w.turn++) {
     const focus = packTarget(w);
+    let anyConverge = false;
+    const wolfFrames: WolfFrame[] = [];
     for (const wolf of wolves) {
-      if (!wolf.alive) continue;
       const act = utilityDecide(wolfCandidates(), wolf.p, rng).action;
       const own = nearest(wolf, deer);
       if (act === "chase" && own) step(wolf, own.x, own.y);
-      else if (act === "converge" && focus) step(wolf, focus.x, focus.y);
+      else if (act === "converge" && focus) { step(wolf, focus.x, focus.y); anyConverge = true; }
       else if (act === "cutoff" && own) step(wolf, clampX(own.x + 2), own.y);
       // hold: no move
-      if (trace && w.turn <= 12) trace.push(`T${w.turn} ${wolf.id} ${act}`);
+      wolfFrames.push({ id: wolf.id, x: wolf.x, y: wolf.y, action: act });
     }
+    const deerFrames: DeerFrame[] = [];
     for (const d of deer) {
-      if (!d.alive) continue;
+      if (!d.alive) { deerFrames.push({ id: d.id, x: d.x, y: d.y, alive: false, action: null }); continue; }
       const threat = nearest(d, wolves);
       const td = threat ? dist(d, threat) : 99;
       const act = utilityDecide(deerCandidates(td), d.p, rng).action;
@@ -86,10 +104,13 @@ export function runHunt(wolfP: Personality, deerP: Personality, nWolves: number,
       else if (act === "scatter") step(d, rng.int(W), rng.int(H), fast);
       else if (act === "graze") step(d, d.x + (rng.next() < 0.5 ? 1 : -1), d.y + (rng.next() < 0.5 ? 1 : -1));
       // freeze: no move
-      if (trace && w.turn <= 12) trace.push(`T${w.turn} ${d.id} ${act}`);
+      deerFrames.push({ id: d.id, x: d.x, y: d.y, alive: true, action: act });
     }
+    const caught: string[] = [];
     for (const wolf of wolves) for (const d of deer)
-      if (wolf.alive && d.alive && dist(wolf, d) === 0) d.alive = false;
+      if (wolf.alive && d.alive && dist(wolf, d) === 0) { d.alive = false; caught.push(d.id); }
+    for (const id of caught) { const f = deerFrames.find(x => x.id === id); if (f) f.alive = false; }
+    replay?.push({ turn: w.turn, wolves: wolfFrames, deer: deerFrames, focusId: anyConverge && focus ? focus.id : null, caught });
   }
   return { caught: deer.filter(d => !d.alive).length, total: nDeer, turns: w.turn - 1 };
 }

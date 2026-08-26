@@ -37,7 +37,13 @@ button.ghost{background:transparent}
 button.mini{padding:4px 10px;font-size:11px}
 .sweepbox{display:flex;gap:8px;align-items:center;font:13px "IBM Plex Mono",monospace;color:var(--mut);flex-wrap:wrap}
 .sweepbox select{width:auto}
-.out{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:15px;min-height:130px}
+.board{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:12px;margin-bottom:14px}
+#huntCanvas{width:100%;height:auto;display:block;border-radius:6px}
+.boardhud{display:flex;justify-content:space-between;align-items:center;font:12px "IBM Plex Mono",monospace;color:var(--mut);margin-top:8px}
+.boardctrl{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.boardctrl button{padding:6px 12px;font-size:13px}
+.boardctrl select{width:auto;padding:6px}
+.out{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:15px;min-height:80px}
 .out h3{margin:0 0 10px;font:600 12px "IBM Plex Mono",monospace;text-transform:uppercase;letter-spacing:1.5px;color:var(--mut)}
 .log{font:13px/1.65 "IBM Plex Mono",monospace;white-space:pre-wrap;max-height:360px;overflow:auto}
 .log .cw{color:var(--w);font-weight:600} .log .cd{color:var(--d);font-weight:600}
@@ -74,6 +80,16 @@ table.sweep td:nth-child(3){width:55%}
     <button class="primary" id="btnHunt">Run one hunt</button>
     <button id="btnSim">Simulate 300</button>
   </div>
+  <div class="board">
+    <canvas id="huntCanvas"></canvas>
+    <div class="boardhud"><span id="turnLbl">turn 0 / 0</span><span id="remainLbl">— deer remain</span></div>
+    <div class="boardctrl">
+      <button id="playBtn">▶ Play</button>
+      <button id="stepBtn">Step</button>
+      <button id="restartBtn" class="ghost">Restart</button>
+      speed <select id="speedSel"><option value="1x">1x</option><option value="2x">2x</option><option value="4x">4x</option></select>
+    </div>
+  </div>
   <div class="actions">
     <span class="sweepbox">
       sweep side <select id="sweepSide"><option value="wolves">wolves</option><option value="deer">deer</option></select>
@@ -88,7 +104,7 @@ table.sweep td:nth-child(3){width:55%}
   </div>
   <div class="out">
     <h3 id="outTitle">Output</h3>
-    <div id="out" class="log">Set both sides, then run a hunt. Cooperation is the interesting dial — try it at 0.0 versus 1.0.</div>
+    <div id="out" class="log">Set both sides, then run a hunt to watch it play out on the board. Cooperation is the interesting dial — try it at 0.0 versus 1.0.</div>
   </div>
 </div>
 <script src="app.js"></script>

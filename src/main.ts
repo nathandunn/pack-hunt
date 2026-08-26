@@ -1,5 +1,5 @@
 import { ARCHETYPES, CORE_TRAITS, type Personality } from "@precog/sim-core";
-import { runHunt, runSeries, W, H } from "./sim.js";
+import { runHunt, runSeries, W, H, type TurnSnapshot } from "./sim.js";
 import { sweepTrait, sweepAll, SHAPE_LABEL, setTrait, type TraitKey } from "@precog/agent-forge/dist/sweep.js";
 
 const TRAITS = [...CORE_TRAITS, "randomness"] as const;
@@ -67,17 +67,145 @@ function shapeArrow(shape: string) {
   return ({ up: "↑", down: "↓", peaked: "▲", valley: "▼", flat: "–" } as Record<string, string>)[shape] ?? "";
 }
 
+// ── Animated board player ──────────────────────────────────────────
+const CELL = 34;
+const canvas = document.getElementById("huntCanvas") as HTMLCanvasElement;
+canvas.width = W * CELL;
+canvas.height = H * CELL;
+const ctx = canvas.getContext("2d")!;
+const turnLbl = document.getElementById("turnLbl")!;
+const remainLbl = document.getElementById("remainLbl")!;
+const playBtn = document.getElementById("playBtn") as HTMLButtonElement;
+const stepBtn = document.getElementById("stepBtn") as HTMLButtonElement;
+const restartBtn = document.getElementById("restartBtn") as HTMLButtonElement;
+const speedSel = document.getElementById("speedSel") as HTMLSelectElement;
+
+let frames: TurnSnapshot[] = [];
+let frameIdx = 0;
+let playing = false;
+let timer: number | null = null;
+let totalDeer = 0;
+
+const WOLF_ACTION_GLYPH: Record<string, string> = { chase: "→", converge: "◎", cutoff: "⤳", hold: "⏸" };
+const DEER_ACTION_GLYPH: Record<string, string> = { flee: "≫", scatter: "✳", freeze: "!", graze: "·" };
+
+function cellX(x: number) { return x * CELL + CELL / 2; }
+function cellY(y: number) { return y * CELL + CELL / 2; }
+
+function drawFrame(f: TurnSnapshot | null) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#181d15";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#232a1e";
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= W; x++) { ctx.beginPath(); ctx.moveTo(x * CELL, 0); ctx.lineTo(x * CELL, canvas.height); ctx.stroke(); }
+  for (let y = 0; y <= H; y++) { ctx.beginPath(); ctx.moveTo(0, y * CELL); ctx.lineTo(canvas.width, y * CELL); ctx.stroke(); }
+  if (!f) return;
+
+  // focus ring on the deer the pack is converging on
+  if (f.focusId) {
+    const target = f.deer.find(d => d.id === f.focusId && d.alive);
+    if (target) {
+      ctx.strokeStyle = "#d4a24c";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(cellX(target.x), cellY(target.y), CELL * 0.55, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // deer
+  for (const d of f.deer) {
+    if (!d.alive && !f.caught.includes(d.id)) continue; // long-dead, skip drawing entirely
+    const caughtNow = f.caught.includes(d.id);
+    ctx.fillStyle = caughtNow ? "#c96a4a" : "#8fc98a";
+    ctx.beginPath();
+    ctx.arc(cellX(d.x), cellY(d.y), CELL * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    if (caughtNow) {
+      ctx.strokeStyle = "#f0a06a";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cellX(d.x), cellY(d.y), CELL * 0.45, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (d.action) {
+      ctx.fillStyle = "#0d100b";
+      ctx.font = `${CELL * 0.32}px "IBM Plex Mono",monospace`;
+      ctx.textAlign = "center";
+      ctx.fillText(DEER_ACTION_GLYPH[d.action] ?? "", cellX(d.x), cellY(d.y) + CELL * 0.11);
+    }
+  }
+
+  // wolves (drawn on top)
+  for (const w of f.wolves) {
+    ctx.fillStyle = "#d4a24c";
+    ctx.beginPath();
+    ctx.moveTo(cellX(w.x), cellY(w.y) - CELL * 0.3);
+    ctx.lineTo(cellX(w.x) - CELL * 0.26, cellY(w.y) + CELL * 0.22);
+    ctx.lineTo(cellX(w.x) + CELL * 0.26, cellY(w.y) + CELL * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#181d15";
+    ctx.font = `${CELL * 0.3}px "IBM Plex Mono",monospace`;
+    ctx.textAlign = "center";
+    ctx.fillText(WOLF_ACTION_GLYPH[w.action] ?? "", cellX(w.x), cellY(w.y) - CELL * 0.02);
+  }
+}
+
+function renderCurrent() {
+  const f = frames[frameIdx] ?? null;
+  drawFrame(f);
+  const remaining = f ? f.deer.filter(d => d.alive).length : totalDeer;
+  turnLbl.textContent = `turn ${f ? f.turn : 0} / ${frames.length}`;
+  remainLbl.textContent = `${remaining} of ${totalDeer} deer remain`;
+}
+
+function stopPlaying() {
+  playing = false;
+  playBtn.textContent = "▶ Play";
+  if (timer !== null) { clearInterval(timer); timer = null; }
+}
+
+function stepForward(): boolean {
+  if (frameIdx >= frames.length - 1) { stopPlaying(); return false; }
+  frameIdx++;
+  renderCurrent();
+  return true;
+}
+
+function startPlaying() {
+  if (frameIdx >= frames.length - 1) frameIdx = 0;
+  playing = true;
+  playBtn.textContent = "⏸ Pause";
+  const ms = { "1x": 450, "2x": 220, "4x": 100 }[speedSel.value] ?? 450;
+  if (timer !== null) clearInterval(timer);
+  timer = window.setInterval(() => { if (!stepForward()) stopPlaying(); }, ms);
+}
+
+playBtn.addEventListener("click", () => { playing ? stopPlaying() : startPlaying(); });
+stepBtn.addEventListener("click", () => { stopPlaying(); stepForward(); });
+restartBtn.addEventListener("click", () => { stopPlaying(); frameIdx = 0; renderCurrent(); });
+speedSel.addEventListener("change", () => { if (playing) startPlaying(); });
+
 document.getElementById("btnHunt")!.addEventListener("click", () => {
-  const trace: string[] = [];
-  const r = runHunt(wolfSide.get(), deerSide.get(), +nW.value, +nD.value, Date.now() % 2 ** 31, 60, trace);
+  stopPlaying();
+  frames = [];
+  const r = runHunt(wolfSide.get(), deerSide.get(), +nW.value, +nD.value, Date.now() % 2 ** 31, 60, frames);
+  totalDeer = +nD.value;
+  frameIdx = 0;
+  renderCurrent();
   outTitle.textContent = `Single hunt — ${nW.value} wolves vs ${nD.value} deer`;
   const verdict = r.caught === r.total
     ? `<span class="cw">PACK WIPEOUT — all ${r.total} deer caught in ${r.turns} turns</span>`
     : r.caught === 0
       ? `<span class="cd">CLEAN ESCAPE — no deer caught in ${r.turns} turns</span>`
       : `<span class="cn">${r.caught} of ${r.total} caught in ${r.turns} turns</span>`;
-  out.innerHTML = `${verdict}\n\n<span class="mut">first turns of decision trace:</span>\n` + trace.slice(0, 40).join("\n");
+  out.innerHTML = verdict;
+  startPlaying();
 });
+// ── end animated board player ─────────────────────────────────────
 
 document.getElementById("btnSim")!.addEventListener("click", () => {
   const total = +nD.value;
@@ -141,3 +269,5 @@ document.getElementById("btnSweepAll")!.addEventListener("click", () => {
     btn.addEventListener("click", () => applyLock(side, btn.dataset.trait as TraitKey, +btn.dataset.value!));
   });
 });
+
+renderCurrent();
