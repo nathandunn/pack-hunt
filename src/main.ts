@@ -1,6 +1,7 @@
 import { ARCHETYPES, CORE_TRAITS, type Personality } from "@precog/sim-core";
 import { runHunt, runSeries, W, H, type TurnSnapshot } from "./sim.js";
 import { sweepTrait, sweepAll, SHAPE_LABEL, setTrait, type TraitKey } from "@precog/agent-forge/dist/sweep.js";
+import { evolve } from "@precog/agent-forge/dist/evolve.js";
 
 const TRAITS = [...CORE_TRAITS, "randomness"] as const;
 const clone = (p: Personality): Personality => JSON.parse(JSON.stringify(p));
@@ -267,6 +268,37 @@ document.getElementById("btnSweepAll")!.addEventListener("click", () => {
   out.innerHTML = `<table class="sweep"><tr><th>trait</th><th>impact</th><th>shape</th><th>best</th><th></th></tr>${rows}</table>`;
   out.querySelectorAll<HTMLButtonElement>(".mini").forEach(btn => {
     btn.addEventListener("click", () => applyLock(side, btn.dataset.trait as TraitKey, +btn.dataset.value!));
+  });
+});
+
+/** Optimizer stage 2: evolve all 7 traits of one side at once against the fixed opponent. */
+document.getElementById("btnEvolve")!.addEventListener("click", () => {
+  const side = sweepSideSel.value as "wolves" | "deer";
+  const base = sideHandle(side).get();
+  const POP = 14, GENS = 10, N = 30;
+  // The shared evaluator reports the caught fraction; deer want it minimized, so
+  // their fitness is the escaped fraction — same simulations, flipped sign.
+  const raw = makeEvaluator(side, N);
+  const evaluate = side === "deer" ? (p: Personality) => 1 - raw(p) : raw;
+  const label = side === "deer" ? "escaped" : "caught";
+  const genRows: string[] = [];
+  const r = evolve({
+    evaluate, base, seed: 9000, popSize: POP, generations: GENS,
+    onGeneration: g => genRows.push(`<tr><td>${g.generation}</td><td>${(g.bestFitness * 100).toFixed(1)}%</td><td>${(g.meanFitness * 100).toFixed(1)}%</td></tr>`),
+  });
+
+  outTitle.textContent = `Evolve — ${side}, pop ${POP} × ${GENS} generations (${r.evaluations} evaluations × ${N} hunts = ${r.evaluations * N} hunts)`;
+  const gene = (t: TraitKey) => t === "randomness" ? r.best.randomness : r.best.traits[t];
+  const vector = TRAITS.map(t => `${t} <b>${gene(t).toFixed(2)}</b>`).join(" · ");
+  out.innerHTML =
+    `<div class="summary">best ${label} rate <b>${(r.bestFitness * 100).toFixed(1)}%</b> · started at ${(r.history[0].bestFitness * 100).toFixed(1)}%</div>` +
+    `<table class="sweep"><tr><th>gen</th><th>best ${label}%</th><th>mean ${label}%</th></tr>${genRows.join("")}</table>` +
+    `<div class="summary">${vector}</div>` +
+    `<div class="lockrow"><button id="applyEvolved">Apply best to ${side}</button></div>`;
+  document.getElementById("applyEvolved")!.addEventListener("click", () => {
+    sideHandle(side).set(r.best);
+    const marks = lockMarksOf(side);
+    for (const t of TRAITS) marks[t].textContent = "🧬";
   });
 });
 
