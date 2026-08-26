@@ -1,5 +1,5 @@
 import { ARCHETYPES, CORE_TRAITS, type Personality } from "@precog/sim-core";
-import { runHunt, runSeries, W, H, type TurnSnapshot } from "./sim.js";
+import { runHunt, runSeries, W, H, WOLF_STAMINA, type TurnSnapshot } from "./sim.js";
 import { sweepTrait, sweepAll, SHAPE_LABEL, setTrait, type TraitKey } from "@precog/agent-forge/dist/sweep.js";
 import { evolve } from "@precog/agent-forge/dist/evolve.js";
 
@@ -76,6 +76,7 @@ canvas.height = H * CELL;
 const ctx = canvas.getContext("2d")!;
 const turnLbl = document.getElementById("turnLbl")!;
 const remainLbl = document.getElementById("remainLbl")!;
+const wolvesLbl = document.getElementById("wolvesLbl")!;
 const playBtn = document.getElementById("playBtn") as HTMLButtonElement;
 const stepBtn = document.getElementById("stepBtn") as HTMLButtonElement;
 const restartBtn = document.getElementById("restartBtn") as HTMLButtonElement;
@@ -141,7 +142,27 @@ function drawFrame(f: TurnSnapshot | null) {
 
   // wolves (drawn on top)
   for (const w of f.wolves) {
-    ctx.fillStyle = "#d4a24c";
+    if (w.exhausted) {
+      // Exhausted: greyed and slumped — a flattened, low-slung silhouette
+      // instead of the alert upright triangle, per SPEC v0.3 rule 3.
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = "#5c6156";
+      ctx.beginPath();
+      ctx.moveTo(cellX(w.x), cellY(w.y) - CELL * 0.1);
+      ctx.lineTo(cellX(w.x) - CELL * 0.3, cellY(w.y) + CELL * 0.24);
+      ctx.lineTo(cellX(w.x) + CELL * 0.3, cellY(w.y) + CELL * 0.24);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#9aa192";
+      ctx.font = `${CELL * 0.26}px "IBM Plex Mono",monospace`;
+      ctx.textAlign = "center";
+      ctx.fillText("zZ", cellX(w.x), cellY(w.y) - CELL * 0.14);
+      continue;
+    }
+    // A catch flash: draw the attacking wolf in the same hot highlight used
+    // for the deer it just took, so the attack-adjacent move reads clearly.
+    ctx.fillStyle = w.attacked ? "#f0a06a" : "#d4a24c";
     ctx.beginPath();
     ctx.moveTo(cellX(w.x), cellY(w.y) - CELL * 0.3);
     ctx.lineTo(cellX(w.x) - CELL * 0.26, cellY(w.y) + CELL * 0.22);
@@ -151,7 +172,16 @@ function drawFrame(f: TurnSnapshot | null) {
     ctx.fillStyle = "#181d15";
     ctx.font = `${CELL * 0.3}px "IBM Plex Mono",monospace`;
     ctx.textAlign = "center";
-    ctx.fillText(WOLF_ACTION_GLYPH[w.action] ?? "", cellX(w.x), cellY(w.y) - CELL * 0.02);
+    ctx.fillText(WOLF_ACTION_GLYPH[w.action ?? ""] ?? "", cellX(w.x), cellY(w.y) - CELL * 0.02);
+
+    // Stamina bar: legible at a glance, drains toward exhaustion.
+    const barW = CELL * 0.56, barH = 3;
+    const bx = cellX(w.x) - barW / 2, by = cellY(w.y) + CELL * 0.32;
+    const frac = Math.max(0, Math.min(1, w.stamina / WOLF_STAMINA));
+    ctx.fillStyle = "#232a1e";
+    ctx.fillRect(bx, by, barW, barH);
+    ctx.fillStyle = frac > 0.3 ? "#d4a24c" : "#c96a4a";
+    ctx.fillRect(bx, by, barW * frac, barH);
   }
 }
 
@@ -161,6 +191,13 @@ function renderCurrent() {
   const remaining = f ? f.deer.filter(d => d.alive).length : totalDeer;
   turnLbl.textContent = `turn ${f ? f.turn : 0} / ${frames.length}`;
   remainLbl.textContent = `${remaining} of ${totalDeer} deer remain`;
+  if (f) {
+    const active = f.wolves.filter(w => !w.exhausted);
+    const stamina = active.map(w => w.stamina).join(",") || "—";
+    wolvesLbl.textContent = `${active.length}/${f.wolves.length} wolves hunting · stamina ${stamina}`;
+  } else {
+    wolvesLbl.textContent = "";
+  }
 }
 
 function stopPlaying() {
@@ -203,7 +240,7 @@ document.getElementById("btnHunt")!.addEventListener("click", () => {
     : r.caught === 0
       ? `<span class="cd">CLEAN ESCAPE — no deer caught in ${r.turns} turns</span>`
       : `<span class="cn">${r.caught} of ${r.total} caught in ${r.turns} turns</span>`;
-  out.innerHTML = verdict;
+  out.innerHTML = verdict + `<div class="mut">${r.exhausted} of ${nW.value} wolves ran out of stamina</div>`;
   startPlaying();
 });
 // ── end animated board player ─────────────────────────────────────

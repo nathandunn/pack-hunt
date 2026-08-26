@@ -66,7 +66,7 @@ table.sweep td:nth-child(3){width:55%}
 <div class="wrap">
   <header>
     <h1><span class="w">PACK</span> <span class="d">HUNT</span></h1>
-    <div class="sub">asymmetric roles · wolves score by catching, deer by outlasting the clock</div>
+    <div class="sub">asymmetric roles · no two animals share a square · wolves catch by moving into an adjacent deer, on a ~30-move stamina budget — hold costs nothing, exhausted wolves grey out</div>
   </header>
   <div class="duel">
     <section class="side w" id="sideW"><h2>Wolves — chase / converge / cut off / hold</h2></section>
@@ -82,7 +82,7 @@ table.sweep td:nth-child(3){width:55%}
   </div>
   <div class="board">
     <canvas id="huntCanvas"></canvas>
-    <div class="boardhud"><span id="turnLbl">turn 0 / 0</span><span id="remainLbl">— deer remain</span></div>
+    <div class="boardhud"><span id="turnLbl">turn 0 / 0</span><span id="wolvesLbl"></span><span id="remainLbl">— deer remain</span></div>
     <div class="boardctrl">
       <button id="playBtn">▶ Play</button>
       <button id="stepBtn">Step</button>
