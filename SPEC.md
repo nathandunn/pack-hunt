@@ -1,45 +1,70 @@
-# Pack Hunt — SPEC v0.3
+# Pack Hunt — SPEC v0.4
 
-Status: agreed 2026-08-26, from a feedback session. Supersedes v0.2.
-Cross-cutting requirements (league, legibility, lab, style):
-see `hub-orchestrator/specs/2026-08-26-suite-v0.3.md`.
+Status: agreed 2026-08-27, from a feedback session. Supersedes v0.3.
+Cross-cutting requirements: see `hub-orchestrator/specs/2026-08-26-suite-v0.3.md`
+(league/tank/lab restructure still deferred for this app).
 
 ## Verdict
-**Iterate.** The hunt is the right idea; three rule changes tighten it and
-make escape the norm.
+**Rework the movement and the objective.** v0.3's rules produced a degenerate
+deer strategy: with survival-by-clock as the goal, hiding in one spot is
+optimal, so the deer hides instead of running. Give the deer somewhere to GO.
 
-## Rule changes
+## The game — the crossing
 
-1. **No square sharing.** No two entities — wolf or deer — ever occupy the
-   same cell. All movement into an occupied square is illegal, with one
-   exception:
-2. **Catch = attack-adjacent.** A wolf catches by moving INTO an adjacent
-   deer's square as an attack; the deer is removed and the wolf takes the
-   square. This is the only square-entry onto an occupied cell, and it is
-   the moment the animation celebrates.
-3. **Per-wolf stamina, ~30 moves.** Each wolf individually has a budget of
-   about 30 moves. **Holding position costs nothing** — patient wolves can
-   ambush while eager ones burn out. A wolf out of moves is exhausted and
-   drops out of the hunt (visibly — slumped sprite, greyed).
+- **5 wolves, 1 deer** by default (sim controls can change counts later).
+- **The deer must reach the LEFT edge of the field.** It spawns on the right.
+  Reaching the left edge is a deer win; being caught is a wolf win. No clock
+  win for either side — the objective forces movement, killing the hiding
+  strategy structurally rather than by tuning.
+- **Smooth, continuous movement** — no grid, no board-game squares. Continuous
+  2D field, fixed deterministic ticks, seeded (follow battle-bots' arena
+  pattern: simulate once, record frames, render from frames; scrubbing free).
+- **Deer moves at 2× wolf speed.** The wolves' only edge is numbers and
+  position: they must spread, anticipate, and intercept — a faster deer
+  through a slower cordon.
+- Catch = a wolf getting within touch radius of the deer.
+- A generous tick cap remains purely as an infinite-loop backstop; in a
+  correctly playing match it should essentially never bind (if neither side
+  can end it, count it a deer win — the deer survived).
 
-## Balance target — deer usually escape
+## Balance target — deer wins 3:1
 
-In the wild the hunt usually fails. Tune (via batch sims, then by watching)
-so a typical hunt catches **0–1 deer**; full wipeouts should be rare events.
-A catch is the fireworks moment of the fish tank precisely because most
-hunts end with the pack exhausted and the herd away.
+With the default configuration, the deer should win about **75%** of matches.
+Wolf catches are the event, at 1-in-4. Verify with batch runs across several
+seed bases and archetype pairings; no pairing should be degenerate
+(always-win/always-lose). Tuning knobs: field size, touch radius, wolf
+spacing/spawn line, deer turn rate vs wolf turn rate — NOT the 2× speed
+ratio, which is fixed by this spec.
 
-## Keep from v0.2
-- The animated board, sprites, action glyphs, and playback controls.
-- The asymmetric sides and both sides' action sets (adjusted for the
-  no-overlap rule).
-- Sweep/evolve/simulate (now in the Lab section).
+## Personalities
 
-## Personality notes
-Stamina makes **patience** directly visible (ambush vs burnout) and sharpens
-**cooperation** (coordinated cutoffs matter more when moves are finite).
-Exaggerate per the suite legibility bar.
+Both sides remain personality-driven via sim-core's utilityDecide:
+- **Wolves** — cooperation = cordon spacing & lane discipline; aggression =
+  direct chase vs holding the line; patience = waiting in the lane vs
+  breaking early; focus = clean intercept angles; risk = gambling on a
+  predicted cut.
+- **Deer** — risk = threading between wolves vs wide arcs; caution = safety
+  margin kept from the nearest wolf; randomness = feints/jinks; focus =
+  reading gaps in the cordon.
+The legibility bar applies: a risky deer should visibly thread the needle;
+a cooperative pack should visibly form a cordon.
 
-## Out of scope
-- Terrain/obstacles, seasons, pack hierarchies.
-- Human control of a wolf or deer.
+## Stamina
+v0.3's per-wolf stamina is **dropped** — the crossing objective bounds match
+length naturally and stamina complicates a chase that is now about angles.
+(Revisit only if wolves turn out to chase forever in circles.)
+
+## Keep
+- Deterministic seeded engine, replay/playback controls, dark-arcade look.
+- Sweep/Sweep All/Evolve rewired to the new evaluator: win rate for the
+  selected side over N seeded matches.
+- The test suite discipline from v0.3: determinism, invariants (touch-radius
+  catches only, speed ratio exactly 2×, bounds), win conditions, and a
+  balance regression test asserting the default deer win rate is in a
+  70–80% band.
+
+## Remove
+- The grid, square-occupancy rules, and attack-adjacent catch (superseded by
+  continuous space + touch radius).
+- Per-wolf stamina and exhaustion rendering.
+- The survive-the-clock deer objective.
