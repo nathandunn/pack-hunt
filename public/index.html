@@ -43,6 +43,7 @@ button.mini{padding:4px 10px;font-size:11px}
 .boardctrl{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .boardctrl button{padding:6px 12px;font-size:13px}
 .boardctrl select{width:auto;padding:6px}
+.boardctrl .scrub{flex:1;min-width:120px;height:4px;accent-color:var(--w)}
 .out{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:15px;min-height:80px}
 .out h3{margin:0 0 10px;font:600 12px "IBM Plex Mono",monospace;text-transform:uppercase;letter-spacing:1.5px;color:var(--mut)}
 .log{font:13px/1.65 "IBM Plex Mono",monospace;white-space:pre-wrap;max-height:360px;overflow:auto}
@@ -66,15 +67,15 @@ table.sweep td:nth-child(3){width:55%}
 <div class="wrap">
   <header>
     <h1><span class="w">PACK</span> <span class="d">HUNT</span></h1>
-    <div class="sub">asymmetric roles · no two animals share a square · wolves catch by moving into an adjacent deer, on a ~30-move stamina budget — hold costs nothing, exhausted wolves grey out</div>
+    <div class="sub">the crossing · the deer spawns right and must reach the left edge at 2× wolf speed · the pack wins by cordon and interception, not pace — a touch is a catch</div>
   </header>
   <div class="duel">
-    <section class="side w" id="sideW"><h2>Wolves — chase / converge / cut off / hold</h2></section>
-    <section class="side d" id="sideD"><h2>Deer — flee / scatter / freeze / graze</h2></section>
+    <section class="side w" id="sideW"><h2>Wolves — chase / intercept / cordon / guard</h2></section>
+    <section class="side d" id="sideD"><h2>Deer — dash / thread / arc / jink</h2></section>
   </div>
   <div class="counts">
-    <div><label>Wolves</label><input type="number" id="nWolves" value="3" min="1" max="8"></div>
-    <div><label>Deer</label><input type="number" id="nDeer" value="5" min="1" max="12"></div>
+    <div><label>Wolves</label><input type="number" id="nWolves" value="5" min="1" max="8"></div>
+    <div><label>Deer</label><input type="number" id="nDeer" value="1" min="1" max="4"></div>
   </div>
   <div class="actions">
     <button class="primary" id="btnHunt">Run one hunt</button>
@@ -82,11 +83,12 @@ table.sweep td:nth-child(3){width:55%}
   </div>
   <div class="board">
     <canvas id="huntCanvas"></canvas>
-    <div class="boardhud"><span id="turnLbl">turn 0 / 0</span><span id="wolvesLbl"></span><span id="remainLbl">— deer remain</span></div>
+    <div class="boardhud"><span id="turnLbl">tick 0 / 0</span><span id="wolvesLbl"></span><span id="remainLbl">progress —</span></div>
     <div class="boardctrl">
       <button id="playBtn">▶ Play</button>
       <button id="stepBtn">Step</button>
       <button id="restartBtn" class="ghost">Restart</button>
+      <input type="range" id="scrub" min="0" max="0" step="1" value="0" class="scrub">
       speed <select id="speedSel"><option value="1x">1x</option><option value="2x">2x</option><option value="4x">4x</option></select>
     </div>
   </div>
@@ -105,7 +107,7 @@ table.sweep td:nth-child(3){width:55%}
   </div>
   <div class="out">
     <h3 id="outTitle">Output</h3>
-    <div id="out" class="log">Set both sides, then run a hunt to watch it play out on the board. Cooperation is the interesting dial — try it at 0.0 versus 1.0.</div>
+    <div id="out" class="log">Set both sides, then run a hunt to watch the crossing. Wolf cooperation is the interesting dial — a high-cooperation pack visibly fences the field; a risky deer threads the needle.</div>
   </div>
 </div>
 <script src="app.js"></script>

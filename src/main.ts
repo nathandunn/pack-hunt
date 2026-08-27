@@ -1,5 +1,8 @@
 import { ARCHETYPES, CORE_TRAITS, type Personality } from "@precog/sim-core";
-import { runHunt, runSeries, W, H, WOLF_STAMINA, type TurnSnapshot } from "./sim.js";
+import {
+  runHunt, runSeries, FIELD_W, FIELD_H, GOAL_X, TOUCH_R, MAX_TICKS, TUNING,
+  type TickFrame, type HuntResult, type WolfAction, type DeerAction,
+} from "./sim.js";
 import { sweepTrait, sweepAll, SHAPE_LABEL, setTrait, type TraitKey } from "@precog/agent-forge/dist/sweep.js";
 import { evolve } from "@precog/agent-forge/dist/evolve.js";
 
@@ -68,11 +71,10 @@ function shapeArrow(shape: string) {
   return ({ up: "↑", down: "↓", peaked: "▲", valley: "▼", flat: "–" } as Record<string, string>)[shape] ?? "";
 }
 
-// ── Animated board player ──────────────────────────────────────────
-const CELL = 34;
+// ── smooth field player (renders recorded frames, interpolated) ────
 const canvas = document.getElementById("huntCanvas") as HTMLCanvasElement;
-canvas.width = W * CELL;
-canvas.height = H * CELL;
+canvas.width = FIELD_W;
+canvas.height = FIELD_H;
 const ctx = canvas.getContext("2d")!;
 const turnLbl = document.getElementById("turnLbl")!;
 const remainLbl = document.getElementById("remainLbl")!;
@@ -81,121 +83,143 @@ const playBtn = document.getElementById("playBtn") as HTMLButtonElement;
 const stepBtn = document.getElementById("stepBtn") as HTMLButtonElement;
 const restartBtn = document.getElementById("restartBtn") as HTMLButtonElement;
 const speedSel = document.getElementById("speedSel") as HTMLSelectElement;
+const scrub = document.getElementById("scrub") as HTMLInputElement;
 
-let frames: TurnSnapshot[] = [];
-let frameIdx = 0;
+let frames: TickFrame[] = [];
+let result: HuntResult | null = null;
+let cursor = 0;                 // fractional frame index — positions interpolate
 let playing = false;
 let timer: number | null = null;
-let totalDeer = 0;
+/** Catch/escape events indexed for the flash effects: tick + location. */
+let flashes: { tick: number; x: number; y: number; kind: "catch" | "escape" }[] = [];
 
-const WOLF_ACTION_GLYPH: Record<string, string> = { chase: "→", converge: "◎", cutoff: "⤳", hold: "⏸" };
-const DEER_ACTION_GLYPH: Record<string, string> = { flee: "≫", scatter: "✳", freeze: "!", graze: "·" };
+const WOLF_TINT: Record<WolfAction, string> = {
+  chase: "#e07b3c", intercept: "#f0c060", cordon: "#d4a24c", guard: "#9a9a58",
+};
+const DEER_TINT: Record<DeerAction, string> = {
+  dash: "#8fc98a", thread: "#aee08a", arc: "#7ab890", jink: "#c9e498",
+};
 
-function cellX(x: number) { return x * CELL + CELL / 2; }
-function cellY(y: number) { return y * CELL + CELL / 2; }
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-function drawFrame(f: TurnSnapshot | null) {
+function drawField() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#181d15";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = "#232a1e";
-  ctx.lineWidth = 1;
-  for (let x = 0; x <= W; x++) { ctx.beginPath(); ctx.moveTo(x * CELL, 0); ctx.lineTo(x * CELL, canvas.height); ctx.stroke(); }
-  for (let y = 0; y <= H; y++) { ctx.beginPath(); ctx.moveTo(0, y * CELL); ctx.lineTo(canvas.width, y * CELL); ctx.stroke(); }
-  if (!f) return;
+  // the goal: the deer escapes across this line on the LEFT edge
+  ctx.fillStyle = "rgba(143,201,138,0.10)";
+  ctx.fillRect(0, 0, GOAL_X + 16, FIELD_H);
+  ctx.strokeStyle = "#8fc98a";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath(); ctx.moveTo(GOAL_X + 16, 0); ctx.lineTo(GOAL_X + 16, FIELD_H); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.save();
+  ctx.translate(12, FIELD_H / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = "rgba(143,201,138,0.55)";
+  ctx.font = '11px "IBM Plex Mono",monospace';
+  ctx.textAlign = "center";
+  ctx.fillText("ESCAPE", 0, 0);
+  ctx.restore();
+}
 
-  // focus ring on the deer the pack is converging on
-  if (f.focusId) {
-    const target = f.deer.find(d => d.id === f.focusId && d.alive);
-    if (target) {
-      ctx.strokeStyle = "#d4a24c";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath();
-      ctx.arc(cellX(target.x), cellY(target.y), CELL * 0.55, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-  }
+function drawAt(c: number) {
+  drawField();
+  if (!frames.length) return;
+  const i0 = Math.min(frames.length - 1, Math.floor(c));
+  const i1 = Math.min(frames.length - 1, i0 + 1);
+  const t = c - i0;
+  const f0 = frames[i0], f1 = frames[i1];
 
-  // deer
-  for (const d of f.deer) {
-    if (!d.alive && !f.caught.includes(d.id)) continue; // long-dead, skip drawing entirely
-    const caughtNow = f.caught.includes(d.id);
-    ctx.fillStyle = caughtNow ? "#c96a4a" : "#8fc98a";
+  // wolves — triangles oriented along heading, tinted by action
+  for (let i = 0; i < f0.wolves.length; i++) {
+    const a = f0.wolves[i], b = f1.wolves[i];
+    const x = lerp(a.x, b.x, t), y = lerp(a.y, b.y, t);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a.h);
+    ctx.fillStyle = WOLF_TINT[a.action];
     ctx.beginPath();
-    ctx.arc(cellX(d.x), cellY(d.y), CELL * 0.28, 0, Math.PI * 2);
-    ctx.fill();
-    if (caughtNow) {
-      ctx.strokeStyle = "#f0a06a";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(cellX(d.x), cellY(d.y), CELL * 0.45, 0, Math.PI * 2);
-      ctx.stroke();
-    } else if (d.action) {
-      ctx.fillStyle = "#0d100b";
-      ctx.font = `${CELL * 0.32}px "IBM Plex Mono",monospace`;
-      ctx.textAlign = "center";
-      ctx.fillText(DEER_ACTION_GLYPH[d.action] ?? "", cellX(d.x), cellY(d.y) + CELL * 0.11);
-    }
-  }
-
-  // wolves (drawn on top)
-  for (const w of f.wolves) {
-    if (w.exhausted) {
-      // Exhausted: greyed and slumped — a flattened, low-slung silhouette
-      // instead of the alert upright triangle, per SPEC v0.3 rule 3.
-      ctx.globalAlpha = 0.5;
-      ctx.fillStyle = "#5c6156";
-      ctx.beginPath();
-      ctx.moveTo(cellX(w.x), cellY(w.y) - CELL * 0.1);
-      ctx.lineTo(cellX(w.x) - CELL * 0.3, cellY(w.y) + CELL * 0.24);
-      ctx.lineTo(cellX(w.x) + CELL * 0.3, cellY(w.y) + CELL * 0.24);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = "#9aa192";
-      ctx.font = `${CELL * 0.26}px "IBM Plex Mono",monospace`;
-      ctx.textAlign = "center";
-      ctx.fillText("zZ", cellX(w.x), cellY(w.y) - CELL * 0.14);
-      continue;
-    }
-    // A catch flash: draw the attacking wolf in the same hot highlight used
-    // for the deer it just took, so the attack-adjacent move reads clearly.
-    ctx.fillStyle = w.attacked ? "#f0a06a" : "#d4a24c";
-    ctx.beginPath();
-    ctx.moveTo(cellX(w.x), cellY(w.y) - CELL * 0.3);
-    ctx.lineTo(cellX(w.x) - CELL * 0.26, cellY(w.y) + CELL * 0.22);
-    ctx.lineTo(cellX(w.x) + CELL * 0.26, cellY(w.y) + CELL * 0.22);
+    ctx.moveTo(10, 0); ctx.lineTo(-7, 6); ctx.lineTo(-4, 0); ctx.lineTo(-7, -6);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = "#181d15";
-    ctx.font = `${CELL * 0.3}px "IBM Plex Mono",monospace`;
-    ctx.textAlign = "center";
-    ctx.fillText(WOLF_ACTION_GLYPH[w.action ?? ""] ?? "", cellX(w.x), cellY(w.y) - CELL * 0.02);
+    ctx.restore();
+    // touch radius, faint — the catch circle is the whole game
+    ctx.strokeStyle = "rgba(212,162,76,0.18)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(x, y, TOUCH_R, 0, Math.PI * 2); ctx.stroke();
+  }
 
-    // Stamina bar: legible at a glance, drains toward exhaustion.
-    const barW = CELL * 0.56, barH = 3;
-    const bx = cellX(w.x) - barW / 2, by = cellY(w.y) + CELL * 0.32;
-    const frac = Math.max(0, Math.min(1, w.stamina / WOLF_STAMINA));
-    ctx.fillStyle = "#232a1e";
-    ctx.fillRect(bx, by, barW, barH);
-    ctx.fillStyle = frac > 0.3 ? "#d4a24c" : "#c96a4a";
-    ctx.fillRect(bx, by, barW * frac, barH);
+  // deer — circle with a heading nose, visibly outpacing the pack
+  for (let i = 0; i < f0.deer.length; i++) {
+    const a = f0.deer[i], b = f1.deer[i];
+    if (a.escaped) continue;                      // already off the field
+    const x = lerp(a.x, b.x, t), y = lerp(a.y, b.y, t);
+    if (!a.alive) {                               // caught — leave a marker
+      ctx.strokeStyle = "#c96a4a";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x - 5, y - 5); ctx.lineTo(x + 5, y + 5);
+      ctx.moveTo(x - 5, y + 5); ctx.lineTo(x + 5, y - 5);
+      ctx.stroke();
+      continue;
+    }
+    ctx.fillStyle = DEER_TINT[a.action];
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a.h) * 13, y + Math.sin(a.h) * 13);
+    ctx.stroke();
+  }
+
+  // event flashes — expanding ring for ~22 ticks after a catch / escape
+  for (const fl of flashes) {
+    const age = c - fl.tick;
+    if (age < 0 || age > 22) continue;
+    const k = age / 22;
+    ctx.strokeStyle = fl.kind === "catch" ? `rgba(240,120,80,${1 - k})` : `rgba(143,201,138,${1 - k})`;
+    ctx.lineWidth = 3 - 2 * k;
+    ctx.beginPath(); ctx.arc(fl.x, fl.y, 8 + k * 46, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // win banner on the final frame
+  if (result && c >= frames.length - 1.001) {
+    const deerWin = result.winner === "deer";
+    ctx.fillStyle = "rgba(16,19,15,0.72)";
+    ctx.fillRect(0, FIELD_H / 2 - 44, FIELD_W, 88);
+    ctx.fillStyle = deerWin ? "#8fc98a" : "#e07b3c";
+    ctx.font = '800 44px "Bitter",Georgia,serif';
+    ctx.textAlign = "center";
+    ctx.fillText(deerWin ? (result.capped ? "SURVIVED" : "ESCAPED") : "CAUGHT", FIELD_W / 2, FIELD_H / 2 + 8);
+    ctx.font = '13px "IBM Plex Mono",monospace';
+    ctx.fillStyle = "#7e8875";
+    ctx.fillText(
+      deerWin ? `the deer crossed in ${result.ticks} ticks` : `the pack closed the cordon in ${result.ticks} ticks`,
+      FIELD_W / 2, FIELD_H / 2 + 32,
+    );
   }
 }
 
 function renderCurrent() {
-  const f = frames[frameIdx] ?? null;
-  drawFrame(f);
-  const remaining = f ? f.deer.filter(d => d.alive).length : totalDeer;
-  turnLbl.textContent = `turn ${f ? f.turn : 0} / ${frames.length}`;
-  remainLbl.textContent = `${remaining} of ${totalDeer} deer remain`;
+  drawAt(cursor);
+  const f = frames[Math.min(frames.length - 1, Math.floor(cursor))] ?? null;
+  turnLbl.textContent = `tick ${frames.length ? Math.floor(cursor) + 1 : 0} / ${frames.length}`;
+  scrub.max = String(Math.max(0, frames.length - 1));
+  scrub.value = String(Math.floor(cursor));
   if (f) {
-    const active = f.wolves.filter(w => !w.exhausted);
-    const stamina = active.map(w => w.stamina).join(",") || "—";
-    wolvesLbl.textContent = `${active.length}/${f.wolves.length} wolves hunting · stamina ${stamina}`;
+    const escaped = f.deer.filter(d => d.escaped).length;
+    const caught = f.deer.filter(d => !d.alive).length;
+    // best progress across the field: escaped = 100%, caught deer freeze where they fell
+    const lead = Math.max(...f.deer.map(d => d.escaped ? 1 : 1 - (d.x - GOAL_X) / (TUNING.deerSpawnX - GOAL_X)));
+    remainLbl.textContent = `progress ${(Math.max(0, Math.min(1, lead)) * 100).toFixed(0)}% · ${escaped} escaped · ${caught} caught`;
+    const counts = new Map<string, number>();
+    for (const w of f.wolves) counts.set(w.action, (counts.get(w.action) ?? 0) + 1);
+    wolvesLbl.textContent = [...counts.entries()].map(([a, n]) => `${a}×${n}`).join(" ");
   } else {
+    remainLbl.textContent = "progress —";
     wolvesLbl.textContent = "";
   }
 }
@@ -206,58 +230,67 @@ function stopPlaying() {
   if (timer !== null) { clearInterval(timer); timer = null; }
 }
 
-function stepForward(): boolean {
-  if (frameIdx >= frames.length - 1) { stopPlaying(); return false; }
-  frameIdx++;
-  renderCurrent();
-  return true;
-}
-
 function startPlaying() {
-  if (frameIdx >= frames.length - 1) frameIdx = 0;
+  if (!frames.length) return;
+  if (cursor >= frames.length - 1) cursor = 0;
   playing = true;
   playBtn.textContent = "⏸ Pause";
-  const ms = { "1x": 450, "2x": 220, "4x": 100 }[speedSel.value] ?? 450;
+  const rate = { "1x": 1, "2x": 2, "4x": 4 }[speedSel.value] ?? 1;
   if (timer !== null) clearInterval(timer);
-  timer = window.setInterval(() => { if (!stepForward()) stopPlaying(); }, ms);
+  timer = window.setInterval(() => {
+    cursor += rate;
+    if (cursor >= frames.length - 1) { cursor = frames.length - 1; renderCurrent(); stopPlaying(); return; }
+    renderCurrent();
+  }, 33);
 }
 
 playBtn.addEventListener("click", () => { playing ? stopPlaying() : startPlaying(); });
-stepBtn.addEventListener("click", () => { stopPlaying(); stepForward(); });
-restartBtn.addEventListener("click", () => { stopPlaying(); frameIdx = 0; renderCurrent(); });
+stepBtn.addEventListener("click", () => {
+  stopPlaying();
+  cursor = Math.min(frames.length - 1, Math.floor(cursor) + 1);
+  renderCurrent();
+});
+restartBtn.addEventListener("click", () => { stopPlaying(); cursor = 0; renderCurrent(); });
 speedSel.addEventListener("change", () => { if (playing) startPlaying(); });
+scrub.addEventListener("input", () => { stopPlaying(); cursor = +scrub.value; renderCurrent(); });
 
 document.getElementById("btnHunt")!.addEventListener("click", () => {
   stopPlaying();
   frames = [];
-  const r = runHunt(wolfSide.get(), deerSide.get(), +nW.value, +nD.value, Date.now() % 2 ** 31, 60, frames);
-  totalDeer = +nD.value;
-  frameIdx = 0;
+  result = runHunt(wolfSide.get(), deerSide.get(), +nW.value, +nD.value, Date.now() % 2 ** 31, MAX_TICKS, frames);
+  flashes = [];
+  for (const f of frames) {
+    for (const ev of f.caught) {
+      const d = f.deer.find(x => x.id === ev.deerId)!;
+      flashes.push({ tick: f.tick, x: d.x, y: d.y, kind: "catch" });
+    }
+    for (const id of f.escaped) {
+      const d = f.deer.find(x => x.id === id)!;
+      flashes.push({ tick: f.tick, x: Math.max(d.x, 4), y: d.y, kind: "escape" });
+    }
+  }
+  cursor = 0;
   renderCurrent();
   outTitle.textContent = `Single hunt — ${nW.value} wolves vs ${nD.value} deer`;
-  const verdict = r.caught === r.total
-    ? `<span class="cw">PACK WIPEOUT — all ${r.total} deer caught in ${r.turns} turns</span>`
-    : r.caught === 0
-      ? `<span class="cd">CLEAN ESCAPE — no deer caught in ${r.turns} turns</span>`
-      : `<span class="cn">${r.caught} of ${r.total} caught in ${r.turns} turns</span>`;
-  out.innerHTML = verdict + `<div class="mut">${r.exhausted} of ${nW.value} wolves ran out of stamina</div>`;
+  const verdict = result.winner === "deer"
+    ? `<span class="cd">${result.capped ? "SURVIVED — the backstop cap ended it" : "ESCAPED"} — ${result.escaped} of ${result.total} deer crossed in ${result.ticks} ticks</span>`
+    : `<span class="cw">CAUGHT — the pack took ${result.caught} of ${result.total} deer in ${result.ticks} ticks</span>`;
+  out.innerHTML = verdict;
   startPlaying();
 });
-// ── end animated board player ─────────────────────────────────────
+// ── end field player ──────────────────────────────────────────────
 
 document.getElementById("btnSim")!.addEventListener("click", () => {
-  const total = +nD.value;
-  const s = runSeries(wolfSide.get(), deerSide.get(), +nW.value, total, 300);
+  const s = runSeries(wolfSide.get(), deerSide.get(), +nW.value, +nD.value, 300);
   outTitle.textContent = `Simulation — 300 hunts`;
   out.innerHTML =
     `<span class="mut">wolves: ${wolfSide.get().id} · deer: ${deerSide.get().id} · ${nW.value}v${nD.value}</span>\n\n` +
-    `average deer caught: <b>${s.caughtAvg.toFixed(2)}</b> of ${total}\n\n` +
-    bar(s.caughtAvg / total * 100, "fw", "catch rate") +
-    bar(s.wipeouts / s.n * 100, "fw", "total wipeouts") +
-    bar(s.escapes / s.n * 100, "fd", "clean escapes");
+    `deer wins: <b>${s.deerWins}</b> · wolf wins: <b>${s.wolfWins}</b> · avg length <b>${s.avgTicks.toFixed(0)}</b> ticks\n\n` +
+    bar(s.deerWinRate * 100, "fd", "deer win rate") +
+    bar((1 - s.deerWinRate) * 100, "fw", "wolf win rate");
 });
 
-/** Metric is always "average deer caught" regardless of which side is swept — neutral, comparable. */
+/** Metric: win rate FOR THE SELECTED SIDE over N seeded hunts. */
 function makeEvaluator(side: "wolves" | "deer", n = 90) {
   const wp = wolfSide.get(), dp = deerSide.get();
   const total = +nD.value, nw = +nW.value;
@@ -265,7 +298,7 @@ function makeEvaluator(side: "wolves" | "deer", n = 90) {
     const wolfP = side === "wolves" ? p : wp;
     const deerP = side === "deer" ? p : dp;
     const s = runSeries(wolfP, deerP, nw, total, n);
-    return s.caughtAvg / total;
+    return side === "deer" ? s.deerWinRate : 1 - s.deerWinRate;
   };
 }
 
@@ -282,11 +315,12 @@ document.getElementById("btnSweep")!.addEventListener("click", () => {
   const evaluate = makeEvaluator(side, 150);
   const r = sweepTrait(base, trait, evaluate, 11);
 
-  outTitle.textContent = `Sweep — ${side} ${trait}, avg deer caught as ${trait} moves 0.0 → 1.0 (150 hunts/step)`;
-  const rows = r.points.map(p => `<tr><td>${p.value.toFixed(1)}</td><td>${(p.metric * 100).toFixed(1)}%</td><td><div class="bartrack"><div class="barfill fw" style="width:${(p.metric * 100).toFixed(1)}%"></div></div></td></tr>`).join("");
+  outTitle.textContent = `Sweep — ${side} ${trait}, ${side} win rate as ${trait} moves 0.0 → 1.0 (150 hunts/step)`;
+  const cls = side === "deer" ? "fd" : "fw";
+  const rows = r.points.map(p => `<tr><td>${p.value.toFixed(1)}</td><td>${(p.metric * 100).toFixed(1)}%</td><td><div class="bartrack"><div class="barfill ${cls}" style="width:${(p.metric * 100).toFixed(1)}%"></div></div></td></tr>`).join("");
   out.innerHTML =
-    `<div class="summary">best <b>${r.best.value.toFixed(2)}</b> (${(r.best.metric * 100).toFixed(1)}% caught) · worst <b>${r.worst.value.toFixed(2)}</b> (${(r.worst.metric * 100).toFixed(1)}%) · impact <b>${(r.impact * 100).toFixed(1)}pp</b> · ${shapeArrow(r.shape)} ${SHAPE_LABEL[r.shape]}</div>` +
-    `<table class="sweep"><tr><th>${trait}</th><th>caught%</th><th></th></tr>${rows}</table>` +
+    `<div class="summary">best <b>${r.best.value.toFixed(2)}</b> (${(r.best.metric * 100).toFixed(1)}% wins) · worst <b>${r.worst.value.toFixed(2)}</b> (${(r.worst.metric * 100).toFixed(1)}%) · impact <b>${(r.impact * 100).toFixed(1)}pp</b> · ${shapeArrow(r.shape)} ${SHAPE_LABEL[r.shape]}</div>` +
+    `<table class="sweep"><tr><th>${trait}</th><th>win%</th><th></th></tr>${rows}</table>` +
     `<div class="lockrow"><button id="lockBest">Lock ${side} to best (${r.best.value.toFixed(2)})</button><button id="lockWorst" class="ghost">Lock ${side} to worst (${r.worst.value.toFixed(2)})</button></div>`;
   document.getElementById("lockBest")!.addEventListener("click", () => applyLock(side, trait, r.best.value));
   document.getElementById("lockWorst")!.addEventListener("click", () => applyLock(side, trait, r.worst.value));
@@ -298,7 +332,7 @@ document.getElementById("btnSweepAll")!.addEventListener("click", () => {
   const evaluate = makeEvaluator(side, 60);
   const results = sweepAll(base, evaluate, 9);
 
-  outTitle.textContent = `Sweep all — every trait on ${side}, ranked by impact (60 hunts/step, 9 steps)`;
+  outTitle.textContent = `Sweep all — every trait on ${side}, ranked by impact on ${side} win rate (60 hunts/step, 9 steps)`;
   const rows = results.map(r =>
     `<tr><td>${r.trait}</td><td>${(r.impact * 100).toFixed(1)}pp</td><td>${shapeArrow(r.shape)} ${SHAPE_LABEL[r.shape]}</td><td>${r.best.value.toFixed(2)} (${(r.best.metric * 100).toFixed(0)}%)</td><td><button class="mini" data-trait="${r.trait}" data-value="${r.best.value}">lock best</button></td></tr>`
   ).join("");
@@ -313,11 +347,7 @@ document.getElementById("btnEvolve")!.addEventListener("click", () => {
   const side = sweepSideSel.value as "wolves" | "deer";
   const base = sideHandle(side).get();
   const POP = 14, GENS = 10, N = 30;
-  // The shared evaluator reports the caught fraction; deer want it minimized, so
-  // their fitness is the escaped fraction — same simulations, flipped sign.
-  const raw = makeEvaluator(side, N);
-  const evaluate = side === "deer" ? (p: Personality) => 1 - raw(p) : raw;
-  const label = side === "deer" ? "escaped" : "caught";
+  const evaluate = makeEvaluator(side, N);   // already win-rate-for-the-selected-side
   const genRows: string[] = [];
   const r = evolve({
     evaluate, base, seed: 9000, popSize: POP, generations: GENS,
@@ -328,8 +358,8 @@ document.getElementById("btnEvolve")!.addEventListener("click", () => {
   const gene = (t: TraitKey) => t === "randomness" ? r.best.randomness : r.best.traits[t];
   const vector = TRAITS.map(t => `${t} <b>${gene(t).toFixed(2)}</b>`).join(" · ");
   out.innerHTML =
-    `<div class="summary">best ${label} rate <b>${(r.bestFitness * 100).toFixed(1)}%</b> · started at ${(r.history[0].bestFitness * 100).toFixed(1)}%</div>` +
-    `<table class="sweep"><tr><th>gen</th><th>best ${label}%</th><th>mean ${label}%</th></tr>${genRows.join("")}</table>` +
+    `<div class="summary">best ${side} win rate <b>${(r.bestFitness * 100).toFixed(1)}%</b> · started at ${(r.history[0].bestFitness * 100).toFixed(1)}%</div>` +
+    `<table class="sweep"><tr><th>gen</th><th>best win%</th><th>mean win%</th></tr>${genRows.join("")}</table>` +
     `<div class="summary">${vector}</div>` +
     `<div class="lockrow"><button id="applyEvolved">Apply best to ${side}</button></div>`;
   document.getElementById("applyEvolved")!.addEventListener("click", () => {

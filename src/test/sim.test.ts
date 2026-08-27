@@ -1,150 +1,165 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ARCHETYPES } from "@precog/sim-core";
-import { runHunt, W, H, WOLF_STAMINA, type TurnSnapshot } from "../sim.js";
+import {
+  runHunt, runSeries,
+  FIELD_W, FIELD_H, WOLF_SPEED, DEER_SPEED, TOUCH_R, GOAL_X, MAX_TICKS,
+  type TickFrame,
+} from "../sim.js";
 
-const ARCH_KEYS = Object.keys(ARCHETYPES);
+// v0.4 defaults: 5 wolves, 1 deer, teamplayer pack vs defender deer.
+const WOLF_P = ARCHETYPES.teamplayer;
+const DEER_P = ARCHETYPES.defender;
 
-test("a fixed seed reproduces an identical hunt exactly, including the tick-by-tick replay", () => {
-  const wolfP = ARCHETYPES.teamplayer, deerP = ARCHETYPES.defender;
-  const replayA: TurnSnapshot[] = [];
-  const replayB: TurnSnapshot[] = [];
-  const a = runHunt(wolfP, deerP, 3, 5, 42, 60, replayA);
-  const b = runHunt(wolfP, deerP, 3, 5, 42, 60, replayB);
+test("a fixed seed reproduces an identical hunt exactly, including the tick-by-tick frame log", () => {
+  const framesA: TickFrame[] = [];
+  const framesB: TickFrame[] = [];
+  const a = runHunt(WOLF_P, DEER_P, 5, 1, 42, MAX_TICKS, framesA);
+  const b = runHunt(WOLF_P, DEER_P, 5, 1, 42, MAX_TICKS, framesB);
   assert.deepEqual(a, b, "same seed must produce an identical hunt result");
-  assert.deepEqual(replayA, replayB, "same seed must produce an identical turn-by-turn replay");
+  assert.deepEqual(framesA, framesB, "same seed must produce an identical frame log");
+  assert.ok(framesA.length > 0, "a hunt must record frames");
 });
 
-test("different seeds produce different outcomes (sanity check the seed actually matters)", () => {
-  const wolfP = ARCHETYPES.teamplayer, deerP = ARCHETYPES.defender;
-  const a = runHunt(wolfP, deerP, 3, 5, 1);
-  const b = runHunt(wolfP, deerP, 3, 5, 2);
-  assert.notDeepEqual(a, b);
+test("different seeds produce different hunts (sanity check the seed actually matters)", () => {
+  const framesA: TickFrame[] = [];
+  const framesB: TickFrame[] = [];
+  runHunt(WOLF_P, DEER_P, 5, 1, 1, MAX_TICKS, framesA);
+  runHunt(WOLF_P, DEER_P, 5, 1, 2, MAX_TICKS, framesB);
+  assert.notDeepEqual(framesA, framesB);
 });
 
-test("no two entities — wolf or deer, spawn included — ever occupy the same cell, across many seeds and roster sizes", () => {
-  let turnsChecked = 0;
-  for (let seed = 0; seed < 400; seed++) {
-    const wolfP = ARCHETYPES[ARCH_KEYS[seed % ARCH_KEYS.length]];
-    const deerP = ARCHETYPES[ARCH_KEYS[(seed + 1) % ARCH_KEYS.length]];
-    const nW = 1 + (seed % 8);
-    const nD = 1 + (seed % 12);
-    const replay: TurnSnapshot[] = [];
-    runHunt(wolfP, deerP, nW, nD, seed, 60, replay);
-    for (const snap of replay) {
-      turnsChecked++;
-      const occ = new Set<string>();
-      for (const w of snap.wolves) {
-        const k = `${w.x},${w.y}`;
-        assert.ok(!occ.has(k), `seed ${seed} turn ${snap.turn}: wolf ${w.id} landed on an occupied cell`);
-        occ.add(k);
-        assert.ok(w.x >= 0 && w.x < W && w.y >= 0 && w.y < H, "wolf must stay on the board");
+test("the deer moves at exactly 2x wolf speed, measured in flight from the frame log", () => {
+  assert.equal(DEER_SPEED, WOLF_SPEED * 2, "the constant ratio is fixed by SPEC v0.4");
+  const MARGIN = DEER_SPEED + 1;  // ignore steps that may have been clamped at a field edge
+  let deerSteps = 0, wolfSteps = 0, wolfHolds = 0;
+  for (let seed = 0; seed < 20; seed++) {
+    const frames: TickFrame[] = [];
+    runHunt(WOLF_P, DEER_P, 5, 1, seed, MAX_TICKS, frames);
+    for (let i = 1; i < frames.length; i++) {
+      const prev = frames[i - 1], cur = frames[i];
+      const pd = prev.deer[0], cd = cur.deer[0];
+      if (pd.alive && !pd.escaped && cd.alive && !cd.escaped &&
+          pd.x > MARGIN && pd.x < FIELD_W - MARGIN && pd.y > MARGIN && pd.y < FIELD_H - MARGIN) {
+        const step = Math.hypot(cd.x - pd.x, cd.y - pd.y);
+        assert.ok(Math.abs(step - DEER_SPEED) < 1e-9, `deer step ${step} must be exactly ${DEER_SPEED}`);
+        deerSteps++;
       }
-      for (const d of snap.deer) {
-        if (!d.alive) continue;
-        const k = `${d.x},${d.y}`;
-        assert.ok(!occ.has(k), `seed ${seed} turn ${snap.turn}: deer ${d.id} landed on an occupied cell`);
-        occ.add(k);
-        assert.ok(d.x >= 0 && d.x < W && d.y >= 0 && d.y < H, "deer must stay on the board");
-      }
-    }
-  }
-  assert.ok(turnsChecked > 1000, "the sweep above should have actually exercised a meaningful number of turns");
-});
-
-test("a catch is an attack-adjacent move: the wolf that caught a deer ends the turn on that deer's previous square, flagged as having attacked", () => {
-  // Aggressive wolves against a reckless, rarely-fleeing deer archetype, scanned
-  // over many seeds, is close to guaranteed to produce at least one catch.
-  const wolfP = ARCHETYPES.attacker, deerP = ARCHETYPES.attacker;
-  let found = false;
-  for (let seed = 0; seed < 200 && !found; seed++) {
-    const replay: TurnSnapshot[] = [];
-    runHunt(wolfP, deerP, 4, 6, seed, 60, replay);
-    let prevDeerPos = new Map<string, { x: number; y: number }>();
-    for (const snap of replay) {
-      if (snap.caught.length) {
-        for (const deerId of snap.caught) {
-          const before = prevDeerPos.get(deerId);
-          assert.ok(before, "a caught deer must have existed on the board the previous turn");
-          const attacker = snap.wolves.find(w => w.attacked && w.x === before!.x && w.y === before!.y);
-          assert.ok(attacker, `some wolf must be flagged attacked and standing on the caught deer's previous square (turn ${snap.turn})`);
-          found = true;
+      for (let wi = 0; wi < cur.wolves.length; wi++) {
+        const pw = prev.wolves[wi], cw = cur.wolves[wi];
+        if (pw.x > MARGIN && pw.x < FIELD_W - MARGIN && pw.y > MARGIN && pw.y < FIELD_H - MARGIN) {
+          const step = Math.hypot(cw.x - pw.x, cw.y - pw.y);
+          // a wolf either holds its post (0) or moves at exactly WOLF_SPEED
+          if (step > 1e-9) {
+            assert.ok(Math.abs(step - WOLF_SPEED) < 1e-9, `wolf step ${step} must be exactly ${WOLF_SPEED}`);
+            wolfSteps++;
+          } else wolfHolds++;
         }
       }
-      for (const d of snap.deer) if (d.alive) prevDeerPos.set(d.id, { x: d.x, y: d.y });
     }
   }
-  assert.ok(found, "expected at least one catch across the scanned seeds");
+  assert.ok(deerSteps > 1000, "expected to measure many deer steps in flight");
+  assert.ok(wolfSteps > 1000, "expected to measure many wolf steps in flight");
+  assert.ok(wolfHolds > 0, "expected at least one wolf to hold its post (patience visible)");
 });
 
-test("holding position costs no stamina; any other completed action spends exactly one point", () => {
-  const wolfP = ARCHETYPES.teamplayer, deerP = ARCHETYPES.defender;
-  let holdsSeen = 0, movesSeen = 0;
-  for (let seed = 0; seed < 40; seed++) {
-    const replay: TurnSnapshot[] = [];
-    runHunt(wolfP, deerP, 3, 5, seed, 60, replay);
-    const lastStamina = new Map<string, number>();
-    for (const snap of replay) {
-      for (const w of snap.wolves) {
-        if (w.exhausted && w.action === null) continue; // already dropped out before this turn
-        const prev = lastStamina.get(w.id);
-        if (prev !== undefined) {
-          if (w.action === "hold") { assert.equal(w.stamina, prev, "hold must never spend stamina"); holdsSeen++; }
-          else { assert.equal(w.stamina, prev - 1, "a non-hold action must spend exactly one stamina point"); movesSeen++; }
+test("every entity stays inside the field across many seeds", () => {
+  for (let seed = 0; seed < 60; seed++) {
+    const frames: TickFrame[] = [];
+    runHunt(ARCHETYPES.attacker, ARCHETYPES.wildcard, 5, 1, seed, MAX_TICKS, frames);
+    for (const f of frames) {
+      for (const w of f.wolves) {
+        assert.ok(w.x >= 0 && w.x <= FIELD_W && w.y >= 0 && w.y <= FIELD_H,
+          `seed ${seed} tick ${f.tick}: wolf ${w.id} out of bounds (${w.x},${w.y})`);
+      }
+      for (const d of f.deer) {
+        assert.ok(d.x >= 0 && d.x <= FIELD_W && d.y >= 0 && d.y <= FIELD_H,
+          `seed ${seed} tick ${f.tick}: deer ${d.id} out of bounds (${d.x},${d.y})`);
+      }
+    }
+  }
+});
+
+test("a catch only ever happens within the touch radius, and ends that deer's hunt", () => {
+  let catches = 0;
+  for (let seed = 0; seed < 200 && catches < 20; seed++) {
+    const frames: TickFrame[] = [];
+    const r = runHunt(WOLF_P, DEER_P, 5, 1, seed, MAX_TICKS, frames);
+    let sawCatch = false;
+    for (const f of frames) {
+      for (const ev of f.caught) {
+        const d = f.deer.find(x => x.id === ev.deerId)!;
+        const w = f.wolves.find(x => x.id === ev.wolfId)!;
+        const dist = Math.hypot(w.x - d.x, w.y - d.y);
+        assert.ok(dist <= TOUCH_R + 1e-9, `catch at distance ${dist} > touch radius ${TOUCH_R}`);
+        assert.equal(d.alive, false, "a caught deer must be dead in the same frame");
+        sawCatch = true;
+        catches++;
+      }
+      if (sawCatch) {
+        // once caught, the deer never moves or revives in later frames
+        const at = f.deer[0];
+        for (const g of frames.slice(frames.indexOf(f) + 1)) {
+          assert.equal(g.deer[0].alive, false);
+          assert.equal(g.deer[0].x, at.x);
+          assert.equal(g.deer[0].y, at.y);
         }
-        lastStamina.set(w.id, w.stamina);
+        break;
       }
     }
+    if (sawCatch) assert.equal(r.winner, "wolves", "a caught single deer means the wolves won");
   }
-  assert.ok(holdsSeen > 0, "expected to observe at least one free hold across the scanned seeds");
-  assert.ok(movesSeen > 0, "expected to observe at least one stamina-spending move across the scanned seeds");
+  assert.ok(catches > 0, "expected at least one catch across the scanned seeds");
 });
 
-test("a wolf that reaches zero stamina is exhausted, stops acting, and stays put for the rest of the hunt", () => {
-  const wolfP = ARCHETYPES.attacker, deerP = ARCHETYPES.defender;
-  let checkedAny = false;
-  for (let seed = 0; seed < 30; seed++) {
-    const replay: TurnSnapshot[] = [];
-    runHunt(wolfP, deerP, 3, 5, seed, 60, replay);
-    const exhaustedAt = new Map<string, { turnIdx: number; x: number; y: number }>();
-    replay.forEach((snap, turnIdx) => {
-      for (const w of snap.wolves) {
-        if (w.exhausted && !exhaustedAt.has(w.id)) exhaustedAt.set(w.id, { turnIdx, x: w.x, y: w.y });
-      }
-    });
-    for (const [id, at] of exhaustedAt) {
-      checkedAny = true;
-      // The turn a wolf's stamina hits zero is still the turn it spent its
-      // last point (action is the move that used it up); only from the NEXT
-      // turn on does it sit out entirely with action:null.
-      for (let i = at.turnIdx + 1; i < replay.length; i++) {
-        const frame = replay[i].wolves.find(w => w.id === id)!;
-        assert.equal(frame.exhausted, true, `${id} must remain exhausted once it drops out`);
-        assert.equal(frame.action, null, `${id} must take no further action once exhausted`);
-        assert.equal(frame.stamina, 0, `${id} must show zero stamina once exhausted`);
-        assert.equal(frame.x, at.x, `${id} must not move once exhausted`);
-        assert.equal(frame.y, at.y, `${id} must not move once exhausted`);
-      }
+test("win conditions fire both ways: escapes reach the goal line, catches are wolf wins", () => {
+  let escapes = 0, catches = 0;
+  for (let seed = 0; seed < 120; seed++) {
+    const frames: TickFrame[] = [];
+    const r = runHunt(WOLF_P, DEER_P, 5, 1, seed, MAX_TICKS, frames);
+    assert.ok(!r.capped, `seed ${seed}: the backstop cap should essentially never bind in normal play`);
+    const last = frames[frames.length - 1];
+    if (r.winner === "deer") {
+      escapes++;
+      assert.equal(r.escaped, 1);
+      assert.ok(last.deer[0].escaped, "a deer win must be a recorded escape");
+      assert.ok(last.deer[0].x <= GOAL_X, `an escaped deer must be at the goal line (x=${last.deer[0].x})`);
+    } else {
+      catches++;
+      assert.equal(r.caught, 1);
+      assert.ok(!last.deer[0].alive, "a wolf win must be a recorded catch");
     }
+    assert.equal(r.ticks, frames.length, "result tick count must match the frame log");
   }
-  assert.ok(checkedAny, "expected at least one wolf to exhaust across the scanned seeds");
+  assert.ok(escapes > 0, "expected deer escapes across the scanned seeds");
+  assert.ok(catches > 0, "expected wolf catches across the scanned seeds");
 });
 
-test("stamina never goes negative or above the per-wolf budget", () => {
-  for (let seed = 0; seed < 100; seed++) {
-    const replay: TurnSnapshot[] = [];
-    runHunt(ARCHETYPES.attacker, ARCHETYPES.wildcard, 4, 6, seed, 60, replay);
-    for (const snap of replay) for (const w of snap.wolves) {
-      assert.ok(w.stamina >= 0 && w.stamina <= WOLF_STAMINA, `stamina ${w.stamina} out of [0, ${WOLF_STAMINA}]`);
+test("the tick-cap backstop counts as a deer win (the deer survived)", () => {
+  // A tiny cap forces the backstop on a hunt that would otherwise continue.
+  const r = runHunt(WOLF_P, DEER_P, 5, 1, 7, 3);
+  assert.equal(r.capped, true);
+  assert.equal(r.winner, "deer");
+  assert.equal(r.escaped, 1);
+  assert.equal(r.caught, 0);
+  assert.equal(r.ticks, 3);
+});
+
+test("balance regression: default 5v1 teamplayer pack vs defender deer lands in the 70-80% deer-win band", () => {
+  const s = runSeries(WOLF_P, DEER_P, 5, 1, 300, 900);
+  assert.ok(
+    s.deerWinRate >= 0.70 && s.deerWinRate <= 0.80,
+    `deer win rate ${(s.deerWinRate * 100).toFixed(1)}% outside the 70-80% band (SPEC v0.4 target ~75%)`,
+  );
+});
+
+test("no archetype pairing is fully degenerate (never 0% or 100% deer wins)", () => {
+  const keys = Object.keys(ARCHETYPES);
+  for (const wk of keys) {
+    for (const dk of keys) {
+      const s = runSeries(ARCHETYPES[wk], ARCHETYPES[dk], 5, 1, 60, 1700);
+      assert.ok(s.deerWins > 0, `${wk} wolves vs ${dk} deer: deer never won (degenerate)`);
+      assert.ok(s.wolfWins > 0, `${wk} wolves vs ${dk} deer: wolves never won (degenerate)`);
     }
-  }
-});
-
-test("the hunt ends once every deer is caught, every wolf is exhausted, or the turn cap is hit — never later", () => {
-  for (const [wolfKey, deerKey] of [["attacker", "defender"], ["defender", "attacker"], ["teamplayer", "wildcard"]] as const) {
-    const r = runHunt(ARCHETYPES[wolfKey], ARCHETYPES[deerKey], 3, 5, 7, 60);
-    assert.ok(r.turns <= 60, "must respect the turn-cap backstop");
-    assert.ok(r.caught >= 0 && r.caught <= r.total);
-    assert.ok(r.exhausted >= 0 && r.exhausted <= 3);
   }
 });
